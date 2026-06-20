@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>YouTube Downloader</title>
+    <style>
+        * { box-sizing: border-box; font-family: system-ui, sans-serif; }
+        body { max-width: 800px; margin: 50px auto; padding: 20px; background: #f5f5f5; }
+        .container { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+        h1 { text-align: center; margin-top: 0; }
+        input, select, button { width: 100%; padding: 12px; margin: 8px 0; border: 1px solid #ddd; border-radius: 6px; font-size: 16px; }
+        button { background: #ff0000; color: white; font-weight: bold; border: none; cursor: pointer; transition: background 0.3s; }
+        button:hover { background: #cc0000; }
+        button:disabled { opacity: 0.6; cursor: not-allowed; }
+        .formats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px,1fr)); gap: 10px; margin: 15px 0; }
+        .format-card { padding: 12px; border: 2px solid #eee; border-radius: 8px; cursor: pointer; transition: all 0.2s; text-align: center; }
+        .format-card:hover { border-color: #ff0000; }
+        .format-card.selected { border-color: #ff0000; background: #fff0f0; }
+        .progress-container { margin: 20px 0; display: none; }
+        .progress-bar { width: 100%; height: 20px; background: #e0e0e0; border-radius: 10px; overflow: hidden; }
+        .progress-fill { height: 100%; width: 0%; background: #ff0000; transition: width 0.3s; }
+        .progress-text { text-align: center; margin-top: 8px; font-size: 14px; color: #555; }
+        .info-box { background: #f9f9f9; padding: 15px; border-radius: 8px; margin: 15px 0; }
+        .error { color: red; }
+        .success { color: green; }
+        #downloadLink { display: none; margin-top: 15px; }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>🎥 YouTube Downloader</h1>
+    <p><small>Paste a YouTube URL, choose quality, and download.</small></p>
+
+    <form id="urlForm">
+        <input type="text" id="urlInput" placeholder="Enter YouTube URL..." required />
+        <button type="submit" id="fetchBtn">📋 Get Formats</button>
+    </form>
+
+    <div id="infoArea" class="hidden">
+        <div class="info-box" id="videoInfo"></div>
+        <h3>Select format:</h3>
+        <div id="formatList" class="formats-grid"></div>
+        <button id="downloadBtn" disabled>⬇️ Download Selected</button>
+    </div>
+
+    <div id="progressArea" class="progress-container">
+        <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+        <div class="progress-text" id="progressText">0%</div>
+    </div>
+
+    <div id="downloadLink">
+        <a href="#" id="downloadLinkHref" class="success" style="display:inline-block; margin-top:10px;">✅ Download file</a>
+    </div>
+</div>
+
+<script>
+    let selectedFormat = null;
+    let downloadId = null;
+
+    const urlForm = document.getElementById('urlForm');
+    const urlInput = document.getElementById('urlInput');
+    const fetchBtn = document.getElementById('fetchBtn');
+    const infoArea = document.getElementById('infoArea');
+    const videoInfo = document.getElementById('videoInfo');
+    const formatList = document.getElementById('formatList');
+    const downloadBtn = document.getElementById('downloadBtn');
+    const progressArea = document.getElementById('progressArea');
+    const progressFill = document.getElementById('progressFill');
+    const progressText = document.getElementById('progressText');
+    const downloadLink = document.getElementById('downloadLink');
+    const downloadLinkHref = document.getElementById('downloadLinkHref');
+
+    urlForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const url = urlInput.value.trim();
+        if (!url) return;
+
+        fetchBtn.disabled = true;
+        fetchBtn.textContent = '⏳ Loading...';
+        infoArea.classList.add('hidden');
+        formatList.innerHTML = '';
+        downloadBtn.disabled = true;
+        progressArea.style.display = 'none';
+        downloadLink.style.display = 'none';
+
+        try {
+            const response = await fetch('/get_formats', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url })
+            });
+            const data = await response.json();
+            if (data.error) throw new Error(data.error);
+
+            // Show info
+            videoInfo.innerHTML = `
+                <strong>${data.title}</strong><br/>
+                Duration: ${data.duration} &nbsp;|&nbsp; Thumbnail: <img src="${data.thumbnail}" width="80" style="vertical-align:middle;"/>
+            `;
+            infoArea.classList.remove('hidden');
+
+            // Populate formats
+            const allFormats = [...data.formats, ...data.audio_formats.map(f => ({...f, type: 'audio'}))];
+            allFormats.forEach(f => {
+                const card = document.createElement('div');
+                card.className = 'format-card';
+                let label = '';
+                if (f.type === 'audio') {
+                    label = `🎵 Audio (${f.abr || 'N/A'} kbps) – ${f.size_mb.toFixed(2)} MB`;
+                } else {
+                    label = `📹 ${f.resolution} (${f.fps || 'N/A'} fps) – ${f.size_mb.toFixed(2)} MB`;
+                }
+                card.textContent = label;
+                card.dataset.formatId = f.format_id;
+                card.dataset.audioOnly = f.type === 'audio' ? 'true' : 'false';
+                card.addEventListener('click', () => {
+                    document.querySelectorAll('.format-card').forEach(c => c.classList.remove('selected'));
+                    card.classList.add('selected');
+                    selectedFormat = f.format_id;
+                    downloadBtn.disabled = false;
+                });
+                formatList.appendChild(card);
+            });
+
+        } catch (err) {
+            alert('Error: ' + err.message);
+        } finally {
+            fetchBtn.disabled = false;
+            fetchBtn.textContent = '📋 Get Formats';
+        }
+    });
+
+    downloadBtn.addEventListener('click', async () => {
+        if (!selectedFormat) return;
+
+        const url = urlInput.value.trim();
+        const audioOnly = document.querySelector('.format-card.selected')?.dataset.audioOnly === 'true';
+
+        downloadBtn.disabled = true;
+        downloadBtn.textContent = '⏳ Starting...';
+        progressArea.style.display = 'block';
+        progressFill.style.width = '0%';
+        progressText.textContent = '0%';
+        downloadLink.style.display = 'none';
+
+        try {
+            const resp = await fetch('/download', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url, format_id: selectedFormat, audio_only: audioOnly })
+            });
+            const data = await resp.json();
+            if (data.error) throw new Error(data.error);
+            downloadId = data.download_id;
+
+            // Start SSE for progress
+            const eventSource = new EventSource(`/progress/${downloadId}`);
+            eventSource.onmessage = (event) => {
+                const progress = JSON.parse(event.data);
+                if (progress.percent !== undefined) {
+                    progressFill.style.width = progress.percent + '%';
+                    progressText.textContent = progress.percent + '%';
+                    if (progress.speed) {
+                        progressText.textContent += ` (${progress.speed})`;
+                    }
+                }
+                if (progress.status === 'completed') {
+                    eventSource.close();
+                    downloadBtn.textContent = '✅ Done';
+                    // Show download link
+                    downloadLinkHref.href = `/download_file/${downloadId}`;
+                    downloadLink.style.display = 'block';
+                } else if (progress.status === 'error') {
+                    eventSource.close();
+                    alert('Download error: ' + (progress.error || 'Unknown'));
+                    downloadBtn.disabled = false;
+                    downloadBtn.textContent = '⬇️ Download Selected';
+                }
+            };
+            eventSource.onerror = () => {
+                eventSource.close();
+                downloadBtn.disabled = false;
+                downloadBtn.textContent = '⬇️ Download Selected';
+            };
+
+        } catch (err) {
+            alert('Error: ' + err.message);
+            downloadBtn.disabled = false;
+            downloadBtn.textContent = '⬇️ Download Selected';
+        }
+    });
+</script>
+</body>
+</html>
